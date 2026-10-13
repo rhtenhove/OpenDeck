@@ -13,7 +13,9 @@ pub async fn create_instance(app: AppHandle, mut action: Action, context: Contex
 	}
 
 	if context.controller == "Encoder" {
-		let _ = crate::shared::initialise_encoder_layout(&mut action, None);
+		if let Err(error) = crate::shared::initialise_encoder_layout(&mut action, None) {
+			log::warn!("Failed to initialise encoder layout: {error}");
+		}
 	}
 
 	let mut locks = acquire_locks_mut().await;

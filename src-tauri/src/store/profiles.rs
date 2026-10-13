@@ -75,7 +75,12 @@ impl ProfileStores {
 				}
 
 				// Load encoder layout if not yet parsed
-				let _ = initialise_encoder_layout(&mut instance.action, None);
+				// FORK DEVIATION: log instead of discarding -- a failure here leaves
+				// layout_parsed as None and every setFeedback then fails with only
+				// "Layout is not loaded", with no hint as to why.
+				if let Err(error) = initialise_encoder_layout(&mut instance.action, None) {
+					log::warn!("Failed to initialise encoder layout: {error}");
+				}
 			}
 
 			store.save()?;
