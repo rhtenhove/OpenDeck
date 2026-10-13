@@ -111,7 +111,13 @@ pub async fn process_incoming_message(data: Result<Message, Error>, uuid: &str, 
 				if event.context != uuid {
 					return;
 				}
-			} else if matches!(decoded, InboundEventType::SwitchProfile(_) | InboundEventType::DeviceBrightness(_))
+			// FORK DEVIATION: upstream also gates SwitchProfile here, so that only the
+			// bundled Starter Pack may change the selected profile. That is deliberate
+			// upstream (see PR #409), but it makes it impossible for a plugin to own a
+			// key that both displays live state and opens a profile page, since a key
+			// holds one instance and a plugin may only paint its own. We allow
+			// SwitchProfile from any plugin; DeviceBrightness stays restricted.
+			} else if matches!(decoded, InboundEventType::DeviceBrightness(_))
 				&& uuid != "com.amansprojects.starterpack.sdPlugin"
 				&& uuid != "opendeck_alternative_elgato_implementation"
 			{
