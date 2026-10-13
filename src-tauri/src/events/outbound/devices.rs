@@ -4,7 +4,6 @@ use crate::encoder_layouts::generate_encoder_image;
 use crate::plugins::{DEVICE_NAMESPACES, info_param::DeviceInfo};
 
 use base64::Engine;
-use image::ImageFormat;
 use serde::Serialize;
 use std::io::Cursor;
 
@@ -79,8 +78,20 @@ async fn to_encoder_jpeg_data_uri(context: &crate::shared::Context, image: &str)
 
 	let img = generate_encoder_image(context, &bytes).await?;
 
+	// FORK DEVIATION: encode at maximum quality instead of the image crate's
+	// default (75). The device plugin only accepts JPEG, and mirajazz re-encodes
+	// at quality 90 on the way to the panel, so the strip was being compressed
+	// twice, the first time badly -- very visible as ringing around numerals on
+	// a 200x100 canvas. Quality 100 makes the first pass near-lossless and
+	// leaves mirajazz's 90 as the only real loss.
 	let mut buf = Vec::new();
-	img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Jpeg)?;
+	{
+		use image::codecs::jpeg::JpegEncoder;
+		// Cursor must outlive the encoder that borrows it.
+		let mut cursor = Cursor::new(&mut buf);
+		let mut encoder = JpegEncoder::new_with_quality(&mut cursor, 100);
+		encoder.encode_image(&img)?;
+	}
 	let encoded = base64::engine::general_purpose::STANDARD.encode(&buf);
 
 	Ok(format!("data:image/jpeg;base64,{encoded}"))

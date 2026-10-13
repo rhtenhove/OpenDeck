@@ -178,7 +178,7 @@ export async function renderImage(
 
 	context.restore();
 
-	if (active && slotContext) setTimeout(async () => await invoke("update_image", { context: slotContext, image: canvas.toDataURL("image/jpeg") }), 10);
+	if (active && slotContext) setTimeout(async () => await invoke("update_image", { context: slotContext, image: canvas.toDataURL("image/jpeg", 1.0) }), 10);
 }
 
 export async function resizeImage(source: string): Promise<string | undefined> {
