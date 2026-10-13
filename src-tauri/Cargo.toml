@@ -64,3 +64,8 @@ windows-sys = "0.61"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+# FORK DEVIATION: use the vendored strip renderer, whose canvas is 176x112 to
+# match this device instead of the Elgato 200x100. See FORK.md.
+[patch."https://github.com/FrostyCoolSlug/streamdeck-strip-render"]
+streamdeck-strip-render = { path = "../vendor/streamdeck-strip-render" }

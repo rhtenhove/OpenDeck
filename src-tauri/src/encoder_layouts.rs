@@ -36,7 +36,7 @@ pub async fn generate_encoder_image(context: &crate::shared::Context, fallback: 
 			// to rendering what was provided to this function call.
 			trace!("No encoder instance / config found for action; using fallback image");
 
-			let mut fallback_canvas = RgbaImage::from_pixel(200, 100, Rgba([0, 0, 0, 255]));
+			let mut fallback_canvas = RgbaImage::from_pixel(176, 112, Rgba([0, 0, 0, 255]));
 			let fallback_img = image::load_from_memory(fallback)
 				.context("Failed to decode fallback image")?
 				.resize(72, 72, image::imageops::FilterType::Nearest);
@@ -51,7 +51,7 @@ pub async fn generate_encoder_image(context: &crate::shared::Context, fallback: 
 fn get_encoder_image(encoder: &mut Encoder, instance: &ActionInstance) -> Result<DynamicImage, anyhow::Error> {
 	let Some(ref mut renderer) = encoder.layout_parsed else {
 		// Something's gone horribly wrong here; we should have a layout. Render a blank image.
-		return Ok(DynamicImage::new_rgb8(200, 100));
+		return Ok(DynamicImage::new_rgb8(176, 112));
 	};
 
 	let path = config_dir().join("plugins").join(&instance.action.plugin);

@@ -181,6 +181,9 @@
 			{#each { length: device.rows } as _, r}
 				<div class="flex flex-row" role="row">
 					{#each { length: device.columns } as _, c}
+						<!-- FORK DEVIATION: plugin devices render keys at their native 112px, so
+						     mirajazz's resize_exact is a no-op and curves stop being wavy. Elgato
+						     keeps 144, which is already a clean 2x downscale to its 72px keys. -->
 						<Key
 							context={{ device: device.id, profile: profile.id, controller: "Keypad", position: r * device.columns + c }}
 							bind:inslot={profile.keys[r * device.columns + c]}
@@ -188,7 +191,7 @@
 							on:drop={(event) => handleDrop(event, "Keypad", r * device.columns + c)}
 							on:dragstart={(event) => handleDragStart(event, "Keypad", r * device.columns + c)}
 							{handlePaste}
-							size={device.id.startsWith("sd-") && device.rows == 4 && device.columns == 8 ? 192 : 144}
+							size={device.id.startsWith("sd-") ? (device.rows == 4 && device.columns == 8 ? 192 : 144) : 112}
 							label="{$t('device_view.key')} {String.fromCharCode(65 + r)}{c + 1}"
 							tabindex={focusedRow === r && focusedCol === c ? 0 : -1}
 						/>
