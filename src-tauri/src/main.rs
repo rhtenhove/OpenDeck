@@ -110,11 +110,15 @@ async fn main() {
 		.setup(|app| {
 			APP_HANDLE.set(app.handle().clone()).unwrap();
 
-			#[cfg(windows)]
+			// FORK DEVIATION: Linux, like Windows, creates the window hidden
+			// (tauri.linux.conf.json) and shows it only without --hide. Upstream
+			// creates it visible and hides it here, which flashes a taskbar entry
+			// on every start -- and opendeck-power restarts it on every resume.
+			#[cfg(any(windows, target_os = "linux"))]
 			if !std::env::args().any(|v| v == "--hide") {
 				let _ = app.get_webview_window("main").unwrap().show();
 			}
-			#[cfg(not(windows))]
+			#[cfg(not(any(windows, target_os = "linux")))]
 			if std::env::args().any(|v| v == "--hide") {
 				let _ = hide_window(app.handle());
 			}

@@ -112,3 +112,22 @@ why. Both call sites now log the error as a warning.
 
 **Upstream position:** not proposed; a candidate for a PR, since it changes no
 behaviour.
+
+## 5. Start hidden on Linux instead of flashing the window
+
+**Files:** `src-tauri/tauri.linux.conf.json`, `src-tauri/src/main.rs`
+
+Upstream creates the main window visible on Linux and, with `--hide`, hides it
+again in `setup`. Between the two the window is mapped, so every start flashes
+an OpenDeck entry in the taskbar. That is every resume here, because
+`opendeck-power` stops OpenDeck across suspend. Windows already avoids this:
+`tauri.windows.conf.json` creates the window with `"visible": false` and `setup`
+shows it only without `--hide`. Linux now does the same. The window block in
+`tauri.linux.conf.json` is the full copy from `tauri.conf.json`, because the
+platform config is a JSON merge patch and arrays are replaced, not merged.
+
+**Upstream position:** not proposed; a candidate for a PR, since Windows
+already behaves this way.
+
+**On rebase:** if `tauri.conf.json`'s window block changes upstream, copy the
+change into `tauri.linux.conf.json` too.
