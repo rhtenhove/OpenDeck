@@ -178,7 +178,25 @@ export async function renderImage(
 
 	context.restore();
 
-	if (active && slotContext) setTimeout(async () => await invoke("update_image", { context: slotContext, image: canvas.toDataURL("image/jpeg", 1.0) }), 10);
+	// FORK DEVIATION 6: a plugin that renders its own key image as a JPEG (the
+	// dev.ruben.* plugins rasterise with resvg at the panel's native size and
+	// measure the wire size) gets those bytes forwarded to the device as they
+	// are, whenever nothing is drawn over them here. Otherwise the canvas -- a
+	// browser rasterising and re-encoding -- would sit between the plugin and the
+	// panel. Anything with a title, overlay, press effect, rotation or scaling
+	// still goes through the canvas.
+	const source = state.image_override ?? state.image;
+	const passthrough =
+		typeof source === "string" &&
+		source.startsWith("data:image/jpeg;base64,") &&
+		!(state.show && (state.text_override || state.text)) &&
+		!showOk &&
+		!showAlert &&
+		!pressed &&
+		!rotation &&
+		(state.image_scale || 100) === 100 &&
+		state.background_colour.startsWith("#000000");
+	if (active && slotContext) setTimeout(async () => await invoke("update_image", { context: slotContext, image: passthrough ? source : canvas.toDataURL("image/jpeg", 1.0) }), 10);
 }
 
 export async function resizeImage(source: string): Promise<string | undefined> {

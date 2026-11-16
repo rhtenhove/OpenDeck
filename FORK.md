@@ -39,6 +39,10 @@ the authorisation block in `process_incoming_message`, re-apply by removing
 See `docker/` — the build runs in a container so the host needs no Rust, Deno or
 webkit development packages.
 
+On Windows: `scripts/build-windows.ps1` (Rust + MSVC build tools + Deno, built
+natively), `-Install` to install the NSIS bundle silently without a desktop
+shortcut and restart OpenDeck into the tray.
+
 Then install over the stock package:
 
 ```sh
@@ -131,3 +135,85 @@ already behaves this way.
 
 **On rebase:** if `tauri.conf.json`'s window block changes upstream, copy the
 change into `tauri.linux.conf.json` too.
+
+## 6. Forward plugin-rendered JPEG keys to the device untouched
+
+**File:** `src/lib/rendererHelper.ts` (end of `renderImage`)
+
+Key images go plugin -> frontend canvas (a browser rasterising the SVG and
+encoding a JPEG) -> device. The `dev.ruben.*` plugins now render their keys
+themselves with resvg (the same renderer and bundled Noto Sans as the strip
+renderer) at the panel's native 112x112 and send a JPEG data URL, measuring the
+wire size with the device plugin's own encoder. When a key's image is such a
+JPEG and nothing would be drawn over it -- no title text, ok/alert overlay,
+press shrink, rotation, scaling or background colour -- the frontend forwards
+the plugin's bytes to `update_image` instead of the canvas's.
+
+**Why:** a browser to draw a key is overkill, its fonts differ from the strip
+renderer's, and nothing on that path knew how large the result would be --
+which matters on a panel whose firmware truncates (and can hang on) images over
+roughly 10 KB. The canvas still draws the key for OpenDeck's own window.
+
+**Upstream position:** not proposed.
+
+**On rebase:** re-apply at the `update_image` call at the end of `renderImage`.
+
+## 7. Send plugin-rendered JPEG keys to the device from the backend
+
+**Files:** `src-tauri/src/events/frontend/instances.rs` (`update_state`,
+`passthrough_image`), `src-tauri/src/events/outbound/devices.rs` (`update_image`)
+
+Even with deviation 6, every key image reached the device only after the
+frontend had rendered the key: plugin -> backend -> `update_state` event ->
+WebView -> `invoke("update_image")` -> backend -> device plugin. So the WebView
+was on the path of every key update. Now `update_state` itself forwards a key
+whose image qualifies for deviation 6's pass-through (a JPEG data URL with no
+title, scaling, background colour or device rotation) to the device, for the
+selected profile only, as the frontend's command does. The frontend still sends
+the same bytes a moment later; `outbound::devices::update_image` drops a key
+image identical to the one sent to that key within the last 2 s, so the panel
+is written once. Different bytes (the press-shrink effect) and later resends
+(reconnect, wake) always go through.
+
+Dial strips likewise: the frontend used to render each encoder and call
+`update_image`, which composes the strip from the layout and feedback in Rust.
+While there is no window (deviation 8), `update_state` makes that call itself
+(with the window open the frontend still does, so strips are not sent twice).
+
+**Why:** keys keep updating whatever the WebView is doing, which is the
+precondition for suspending or closing it while OpenDeck sits in the tray --
+it is ~390 MB and most of OpenDeck's idle CPU.
+
+**Upstream position:** not proposed.
+
+**On rebase:** re-apply in `update_state` and at the top of the outbound
+`update_image`; keep `passthrough_image` in step with deviation 6's condition.
+
+## 8. Destroy the WebView while OpenDeck is in the tray (Windows)
+
+**Files:** `src-tauri/src/main.rs` (`show_window`, `hide_window`, setup, tray,
+`RunEvent::ExitRequested`), `application_watcher.rs`,
+`events/frontend/{instances,mod,profiles}.rs`, `events/inbound/misc.rs`
+
+Hiding the window now destroys it on Windows, and starting with `--hide` never
+keeps one; showing (tray click, Show, a second launch) builds it again from the
+app config. Its WebView2 was ~390 MB and most of OpenDeck's idle CPU while
+nobody looked at it. Made possible by deviation 7 (keys reach the device from
+the backend). Everything that assumed the window exists now copes without it:
+
+- every `get_webview_window("main").unwrap()` is an `if let`;
+- a plugin's `switchProfile` and the application watcher's profile switches go
+  to the frontend when there is a window (unchanged) and otherwise call
+  `set_selected_profile` directly -- what the frontend would have invoked;
+- `RunEvent::ExitRequested` without an exit code (the last window going) is
+  prevented; Quit and Restart carry a code and still exit.
+
+**Lost while hidden:** `showAlert`/`showOk` overlays (drawn by the frontend),
+plugin brightness requests (applied via the settings page), and keys whose
+image the backend does not forward (titles, static icons) -- none of which the
+dev.ruben.* layout uses. Linux keeps hiding as upstream until tested there.
+
+**Upstream position:** not proposed.
+
+**On rebase:** grep for `FORK DEVIATION 8`; check any new
+`get_webview_window("main")` use for the absent-window case.

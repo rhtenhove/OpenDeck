@@ -102,7 +102,10 @@ pub async fn rename_profile(device: String, old_id: String, new_id: String, reta
 }
 
 pub async fn rerender_images(app: &AppHandle) -> Result<(), anyhow::Error> {
-	let window = app.get_webview_window("main").unwrap();
-	window.emit("rerender_images", ())?;
+	// FORK DEVIATION 8: without a window there is nothing to rerender; plugins
+	// repaint their keys on willAppear (deviation 7 sends them).
+	if let Some(window) = app.get_webview_window("main") {
+		window.emit("rerender_images", ())?;
+	}
 	Ok(())
 }

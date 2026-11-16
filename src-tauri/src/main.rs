@@ -39,12 +39,27 @@ fn show_window(app: &AppHandle) -> Result<(), tauri::Error> {
 		let _ = app.set_activation_policy(ActivationPolicy::Regular);
 	}
 
-	let window = app.get_webview_window("main").ok_or_else(|| tauri::Error::WebviewNotFound)?;
+	// FORK DEVIATION 8: the window is destroyed while hidden (Windows), so
+	// showing it may mean building it again from the app config.
+	let window = match app.get_webview_window("main") {
+		Some(window) => window,
+		None => {
+			let config = app.config().app.windows.iter().find(|w| w.label == "main").cloned().ok_or(tauri::Error::WebviewNotFound)?;
+			tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?
+		}
+	};
 	window.show().and_then(|_| window.set_focus())
 }
 
 fn hide_window(app: &AppHandle) -> Result<(), tauri::Error> {
 	let window = app.get_webview_window("main").ok_or_else(|| tauri::Error::WebviewNotFound)?;
+	// FORK DEVIATION 8: on Windows a hidden window is destroyed rather than
+	// hidden. Its WebView2 held ~390 MB and most of OpenDeck's idle CPU while
+	// nobody looked at it; keys reach the device from the backend (deviation 7)
+	// and the backend switches profiles itself when there is no window.
+	#[cfg(windows)]
+	window.destroy()?;
+	#[cfg(not(windows))]
 	window.hide()?;
 
 	#[cfg(target_os = "macos")]
@@ -116,7 +131,15 @@ async fn main() {
 			// on every start -- and opendeck-power restarts it on every resume.
 			#[cfg(any(windows, target_os = "linux"))]
 			if !std::env::args().any(|v| v == "--hide") {
-				let _ = app.get_webview_window("main").unwrap().show();
+				if let Some(window) = app.get_webview_window("main") {
+					let _ = window.show();
+				}
+			} else {
+				// FORK DEVIATION 8: started into the tray -- no WebView at all.
+				#[cfg(windows)]
+				if let Some(window) = app.get_webview_window("main") {
+					let _ = window.destroy();
+				}
 			}
 			#[cfg(not(any(windows, target_os = "linux")))]
 			if std::env::args().any(|v| v == "--hide") {
@@ -136,7 +159,9 @@ async fn main() {
 			let cmp = (current_version.major, current_version.minor).cmp(&(settings_version.major, settings_version.minor));
 			match cmp {
 				Ordering::Less => {
-					app.get_webview_window("main").unwrap().close().unwrap();
+					if let Some(window) = app.get_webview_window("main") {
+						let _ = window.close();
+					}
 					app.dialog()
 						.message(format!(
 							"A newer version of {PRODUCT_NAME} created configuration files on this device. This version is v{}; please upgrade to v{} or newer.",
@@ -239,8 +264,9 @@ If you have already donated, thank you so much for your support!"#,
 						}
 
 						let app_handle = icon.app_handle();
-						let window = app_handle.get_webview_window("main").unwrap();
-						let _ = if window.is_visible().unwrap_or(false) { hide_window(app_handle) } else { show_window(app_handle) };
+						// FORK DEVIATION 8: no window at all means hidden.
+						let visible = app_handle.get_webview_window("main").map(|w| w.is_visible().unwrap_or(false)).unwrap_or(false);
+						let _ = if visible { hide_window(app_handle) } else { show_window(app_handle) };
 					}
 				})
 				.on_menu_event(move |app, event| {
@@ -394,6 +420,12 @@ If you have already donated, thank you so much for your support!"#,
 	};
 
 	app.run(|app, event| {
+		// FORK DEVIATION 8: destroying the last window would end the app; only an
+		// explicit exit (tray Quit, restart -- they carry an exit code) may.
+		if let tauri::RunEvent::ExitRequested { code: None, api, .. } = &event {
+			api.prevent_exit();
+			return;
+		}
 		if let tauri::RunEvent::Exit = event {
 			futures::executor::block_on(async {
 				let device_ids = shared::DEVICES.iter().filter(|entry| !entry.id.starts_with("sd-")).map(|entry| entry.id.clone()).collect::<Vec<_>>();

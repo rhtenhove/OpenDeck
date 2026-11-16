@@ -32,13 +32,18 @@ pub async fn log_message(uuid: Option<&str>, mut event: PayloadEvent<LogMessageE
 
 pub async fn show_alert(event: ContextEvent) -> Result<(), anyhow::Error> {
 	let app = crate::APP_HANDLE.get().unwrap();
-	app.get_webview_window("main").unwrap().emit("show_alert", event.context)?;
+	// FORK DEVIATION 8: overlays are drawn by the frontend; skipped in the tray.
+	if let Some(window) = app.get_webview_window("main") {
+		window.emit("show_alert", event.context)?;
+	}
 	Ok(())
 }
 
 pub async fn show_ok(event: ContextEvent) -> Result<(), anyhow::Error> {
 	let app = crate::APP_HANDLE.get().unwrap();
-	app.get_webview_window("main").unwrap().emit("show_ok", event.context)?;
+	if let Some(window) = app.get_webview_window("main") {
+		window.emit("show_ok", event.context)?;
+	}
 	Ok(())
 }
 
@@ -50,7 +55,12 @@ pub struct SwitchProfileEvent {
 
 pub async fn switch_profile(event: SwitchProfileEvent) -> Result<(), anyhow::Error> {
 	let app_handle = crate::APP_HANDLE.get().unwrap();
-	app_handle.get_webview_window("main").unwrap().emit("switch_profile", event)?;
+	// FORK DEVIATION 8: with the window open the frontend switches (as upstream);
+	// without one, switch here -- it is what the frontend would have invoked.
+	match app_handle.get_webview_window("main") {
+		Some(window) => window.emit("switch_profile", event)?,
+		None => crate::events::frontend::profiles::set_selected_profile(event.device, event.profile).await?,
+	}
 	Ok(())
 }
 
@@ -62,6 +72,12 @@ pub struct DeviceBrightnessEvent {
 
 pub async fn device_brightness(event: DeviceBrightnessEvent) -> Result<(), anyhow::Error> {
 	let app_handle = crate::APP_HANDLE.get().unwrap();
-	app_handle.get_webview_window("main").unwrap().emit("device_brightness", event)?;
+	// FORK DEVIATION 8: brightness requests go through the settings page; not
+	// applied while OpenDeck is in the tray.
+	if let Some(window) = app_handle.get_webview_window("main") {
+		window.emit("device_brightness", event)?;
+	} else {
+		log::info!("Ignoring a device brightness request while the window is closed");
+	}
 	Ok(())
 }

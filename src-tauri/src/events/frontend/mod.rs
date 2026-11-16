@@ -60,7 +60,10 @@ pub async fn get_devices() -> dashmap::DashMap<String, DeviceInfo> {
 
 pub async fn update_devices() {
 	let app = crate::APP_HANDLE.get().unwrap();
-	let _ = app.get_webview_window("main").unwrap().emit("devices", DEVICES.clone());
+	// FORK DEVIATION 8: the window may not exist while OpenDeck is in the tray.
+	if let Some(window) = app.get_webview_window("main") {
+		let _ = window.emit("devices", DEVICES.clone());
+	}
 }
 
 #[command]

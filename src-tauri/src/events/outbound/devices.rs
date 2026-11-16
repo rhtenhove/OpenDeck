@@ -47,7 +47,39 @@ struct SetImageEvent {
 	image: Option<String>,
 }
 
+/// FORK DEVIATION 7: the last image sent to each key, to drop the frontend's
+/// copy of an image the backend already forwarded. Only within a short window,
+/// so a deliberate resend later (reconnect, wake) always goes through.
+static RECENT: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, (u64, std::time::Instant)>>> =
+	std::sync::LazyLock::new(Default::default);
+const DUPLICATE_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn is_recent_duplicate(context: &crate::shared::Context, image: &Option<String>) -> bool {
+	use std::hash::{Hash, Hasher};
+	let key = format!("{}.{}.{}.{}", context.device, context.profile, context.controller, context.position);
+	let mut recent = RECENT.lock().unwrap();
+	let Some(image) = image else {
+		recent.remove(&key);
+		return false;
+	};
+	let mut h = std::collections::hash_map::DefaultHasher::new();
+	image.hash(&mut h);
+	let hash = h.finish();
+	let now = std::time::Instant::now();
+	if let Some((last, at)) = recent.get(&key)
+		&& *last == hash
+		&& now.duration_since(*at) < DUPLICATE_WINDOW
+	{
+		return true;
+	}
+	recent.insert(key, (hash, now));
+	false
+}
+
 pub async fn update_image(context: crate::shared::Context, image: Option<String>) -> Result<(), anyhow::Error> {
+	if context.controller == "Keypad" && is_recent_duplicate(&context, &image) {
+		return Ok(());
+	}
 	if let Some(plugin) = DEVICE_NAMESPACES.read().await.get(&context.device[..2]) {
 		let image = match (context.controller.as_str(), image) {
 			("Encoder", Some(img)) => Some(to_encoder_jpeg_data_uri(&context, &img).await?),

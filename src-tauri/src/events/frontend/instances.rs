@@ -225,15 +225,75 @@ struct UpdateStateEvent {
 }
 
 pub async fn update_state(app: &AppHandle, context: ActionContext, locks: &mut LocksMut<'_>) -> Result<(), anyhow::Error> {
-	let window = app.get_webview_window("main").unwrap();
-	window.emit(
-		"update_state",
-		UpdateStateEvent {
-			contents: get_instance_mut(&context, locks).await?.cloned(),
-			context,
-		},
-	)?;
+	let contents = get_instance_mut(&context, locks).await?.cloned();
+
+	// FORK DEVIATION 7: a key whose image is a plugin-rendered JPEG with nothing
+	// to draw over it goes to the device from here, without waiting for the
+	// frontend to render it -- so keys keep updating whatever the WebView is
+	// doing. The frontend still sends the same bytes a moment later (deviation
+	// 6); outbound::devices::update_image drops that duplicate.
+	if let Some(instance) = &contents {
+		// Dial strips too: the frontend used to render the encoder's image and call
+		// update_image, which composes the strip from the layout and feedback in
+		// Rust. Ask for that directly, so strips update without a WebView
+		// (deviation 8). The fallback image is only drawn for an encoder without a
+		// layout, which is not what this path is for.
+		// Only without a window: with one, the frontend still does it, and the
+		// strips update every second or so -- no need to render and send twice.
+		if instance.context.controller == "Encoder" && instance.action.encoder.is_some() && app.get_webview_window("main").is_none() {
+			let device_context: crate::shared::Context = (&instance.context).into();
+			tokio::spawn(async move {
+				let selected = crate::store::profiles::DEVICE_STORES.write().await.get_selected_profile(&device_context.device).ok();
+				if selected.as_ref() != Some(&device_context.profile) {
+					return;
+				}
+				if let Err(error) = crate::events::outbound::devices::update_image(device_context, Some(BLACK_JPEG.to_owned())).await {
+					log::warn!("Failed to update encoder image: {}", error);
+				}
+			});
+		}
+		if let Some(image) = passthrough_image(instance) {
+			let device_context: crate::shared::Context = (&instance.context).into();
+			tokio::spawn(async move {
+				let selected = crate::store::profiles::DEVICE_STORES.write().await.get_selected_profile(&device_context.device).ok();
+				if selected.as_ref() != Some(&device_context.profile) {
+					return;
+				}
+				if let Err(error) = crate::events::outbound::devices::update_image(device_context, Some(image)).await {
+					log::warn!("Failed to update device image: {}", error);
+				}
+			});
+		}
+	}
+
+	// FORK DEVIATION 8: no window while OpenDeck is in the tray; the device was
+	// already updated above (deviation 7).
+	if let Some(window) = app.get_webview_window("main") {
+		window.emit("update_state", UpdateStateEvent { contents, context })?;
+	}
 	Ok(())
+}
+
+/// FORK DEVIATION 7: a 1x1 black JPEG, the fallback for a strip rendered from the
+/// backend (only drawn when an encoder has no layout).
+const BLACK_JPEG: &str = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAABAAEDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD8qqKKKAP/2Q==";
+
+/// FORK DEVIATION 7: the same test as the frontend's pass-through (deviation 6),
+/// minus what only the frontend knows (press effect, ok/alert overlays): a key
+/// state whose image is a JPEG data URL with no title, scaling, background or
+/// device rotation applied.
+fn passthrough_image(instance: &ActionInstance) -> Option<String> {
+	if instance.context.controller != "Keypad" || crate::store::get_settings().value.rotation != 0 {
+		return None;
+	}
+	let state = instance.states.get(instance.current_state as usize)?;
+	let image = state.image_override.as_ref().unwrap_or(&state.image);
+	let has_title = state.show && (state.text_override.as_deref().is_some_and(|t| !t.is_empty()) || !state.text.is_empty());
+	let scaled = state.image_scale != 0 && state.image_scale != 100;
+	if !image.starts_with("data:image/jpeg;base64,") || has_title || scaled || !state.background_colour.starts_with("#000000") {
+		return None;
+	}
+	Some(image.clone())
 }
 
 #[command]
@@ -318,7 +378,9 @@ struct KeyMovedEvent {
 }
 
 pub async fn key_moved(app: &AppHandle, context: Context, pressed: bool) -> Result<(), anyhow::Error> {
-	let window = app.get_webview_window("main").unwrap();
-	window.emit("key_moved", KeyMovedEvent { context, pressed })?;
+	// FORK DEVIATION 8: editor feedback only; nothing to do without a window.
+	if let Some(window) = app.get_webview_window("main") {
+		window.emit("key_moved", KeyMovedEvent { context, pressed })?;
+	}
 	Ok(())
 }

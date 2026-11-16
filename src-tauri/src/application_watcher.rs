@@ -32,7 +32,10 @@ pub fn init_application_watcher() {
 				let mut applications = APPLICATIONS.write().await;
 				if !applications.contains(&win.app_name) && !win.app_name.to_lowercase().starts_with(&crate::shared::PRODUCT_NAME.to_lowercase()) && !win.app_name.trim().is_empty() {
 					applications.push(win.app_name.clone());
-					let _ = app_handle.get_webview_window("main").unwrap().emit("applications", applications.clone());
+					// FORK DEVIATION 8: the window may not exist while OpenDeck is in the tray.
+					if let Some(window) = app_handle.get_webview_window("main") {
+						let _ = window.emit("applications", applications.clone());
+					}
 				}
 				win.app_name
 			} else {
@@ -51,13 +54,25 @@ pub fn init_application_watcher() {
 					if crate::store::profiles::DEVICE_STORES.write().await.get_selected_profile(device).ok().as_ref() == Some(profile) {
 						continue;
 					}
-					let _ = app_handle.get_webview_window("main").unwrap().emit(
-						"switch_profile",
-						SwitchProfileEvent {
-							device: device.clone(),
-							profile: profile.clone(),
-						},
-					);
+					// FORK DEVIATION 8: with the window open the frontend switches (as
+					// upstream); without one, switch here -- it is what the frontend
+					// would have invoked.
+					if let Some(window) = app_handle.get_webview_window("main") {
+						let _ = window.emit(
+							"switch_profile",
+							SwitchProfileEvent {
+								device: device.clone(),
+								profile: profile.clone(),
+							},
+						);
+					} else {
+						let (device, profile) = (device.clone(), profile.clone());
+						tokio::spawn(async move {
+							if let Err(error) = crate::events::frontend::profiles::set_selected_profile(device, profile).await {
+								log::warn!("Failed to switch profile: {error}");
+							}
+						});
+					}
 				}
 				previous = app_name;
 			}
