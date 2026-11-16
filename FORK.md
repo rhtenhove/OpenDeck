@@ -189,14 +189,14 @@ it is ~390 MB and most of OpenDeck's idle CPU.
 **On rebase:** re-apply in `update_state` and at the top of the outbound
 `update_image`; keep `passthrough_image` in step with deviation 6's condition.
 
-## 8. Destroy the WebView while OpenDeck is in the tray (Windows)
+## 8. Destroy the WebView while OpenDeck is in the tray (Windows, Linux)
 
 **Files:** `src-tauri/src/main.rs` (`show_window`, `hide_window`, setup, tray,
 `RunEvent::ExitRequested`), `application_watcher.rs`,
 `events/frontend/{instances,mod,profiles}.rs`, `events/inbound/misc.rs`
 
-Hiding the window now destroys it on Windows, and starting with `--hide` never
-keeps one; showing (tray click, Show, a second launch) builds it again from the
+Hiding the window now destroys it on Windows and Linux, and starting with
+`--hide` never keeps one; showing (tray click, Show, a second launch) builds it again from the
 app config. Its WebView2 was ~390 MB and most of OpenDeck's idle CPU while
 nobody looked at it. Made possible by deviation 7 (keys reach the device from
 the backend). Everything that assumed the window exists now copes without it:
@@ -211,7 +211,15 @@ the backend). Everything that assumed the window exists now copes without it:
 **Lost while hidden:** `showAlert`/`showOk` overlays (drawn by the frontend),
 plugin brightness requests (applied via the settings page), and keys whose
 image the backend does not forward (titles, static icons) -- none of which the
-dev.ruben.* layout uses. Linux keeps hiding as upstream until tested there.
+dev.ruben.* layout uses. On Linux that frees WebKitGTK's web and network
+processes (~270 MB together, measured 2026-11-16 with the tray idle); the
+dev.ruben.* plugins draw their own alert face instead of relying on
+`showAlert`, so a refused press still shows. Also needed without a window:
+the frontend used to send the device brightness again when it loaded, and the
+MSD-Pro ignores the one sent at registration after akp05's shutdown command
+(every image arrives, the panel stays dark). So `register_device` sends it
+again 3 s later and redraws the selected profile from the backend
+(`events/inbound/devices.rs`).
 
 **Upstream position:** not proposed.
 

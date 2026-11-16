@@ -39,8 +39,8 @@ fn show_window(app: &AppHandle) -> Result<(), tauri::Error> {
 		let _ = app.set_activation_policy(ActivationPolicy::Regular);
 	}
 
-	// FORK DEVIATION 8: the window is destroyed while hidden (Windows), so
-	// showing it may mean building it again from the app config.
+	// FORK DEVIATION 8: the window is destroyed while hidden (Windows, Linux),
+	// so showing it may mean building it again from the app config.
 	let window = match app.get_webview_window("main") {
 		Some(window) => window,
 		None => {
@@ -53,13 +53,15 @@ fn show_window(app: &AppHandle) -> Result<(), tauri::Error> {
 
 fn hide_window(app: &AppHandle) -> Result<(), tauri::Error> {
 	let window = app.get_webview_window("main").ok_or_else(|| tauri::Error::WebviewNotFound)?;
-	// FORK DEVIATION 8: on Windows a hidden window is destroyed rather than
-	// hidden. Its WebView2 held ~390 MB and most of OpenDeck's idle CPU while
-	// nobody looked at it; keys reach the device from the backend (deviation 7)
-	// and the backend switches profiles itself when there is no window.
-	#[cfg(windows)]
+	// FORK DEVIATION 8: on Windows and Linux a hidden window is destroyed
+	// rather than hidden. Its WebView (WebView2 ~390 MB; WebKitGTK's web and
+	// network processes ~270 MB) and most of OpenDeck's idle CPU went to a
+	// window nobody looked at; keys reach the device from the backend
+	// (deviation 7) and the backend switches profiles itself when there is no
+	// window.
+	#[cfg(any(windows, target_os = "linux"))]
 	window.destroy()?;
-	#[cfg(not(windows))]
+	#[cfg(not(any(windows, target_os = "linux")))]
 	window.hide()?;
 
 	#[cfg(target_os = "macos")]
@@ -136,7 +138,6 @@ async fn main() {
 				}
 			} else {
 				// FORK DEVIATION 8: started into the tray -- no WebView at all.
-				#[cfg(windows)]
 				if let Some(window) = app.get_webview_window("main") {
 					let _ = window.destroy();
 				}

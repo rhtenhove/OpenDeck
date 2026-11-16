@@ -38,6 +38,48 @@ pub async fn register_device(uuid: &str, mut event: PayloadEvent<crate::shared::
 		{
 			let _ = crate::events::outbound::will_appear::will_appear(instance).await;
 		}
+		drop(locks);
+
+		// FORK DEVIATION 8: without a window, wake and redraw the panel once it
+		// has settled. Measured on the MSD-Pro (Linux, 2026-11-16): after the
+		// shutdown command akp05 sends when OpenDeck stops, the panel ignores the
+		// brightness sent at registration above and stays dark although every
+		// image reaches it. The window's frontend used to cover this by sending
+		// the brightness again when it loaded. Strips drawn while it was dark
+		// stay blank until they next change, so the selected profile is drawn
+		// again too (deviation 7's backend path). After 3 s: the outbound
+		// duplicate filter drops an identical key image within 2 s. The window
+		// test comes after the wait: the window destroyed at a --hide start still
+		// counts as present for a moment, and the device registers inside it.
+		{
+			let device = event.payload.id.clone();
+			tokio::spawn(async move {
+				use tauri::Manager;
+				tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+				let Some(app) = crate::APP_HANDLE.get() else { return };
+				if app.get_webview_window("main").is_some() || !DEVICES.contains_key(&device) {
+					return;
+				}
+				log::info!("No window: waking {device} and redrawing its profile from the backend");
+				let _ = crate::events::outbound::devices::set_device_brightness(&device, crate::store::get_settings().value.brightness).await;
+				let mut locks = crate::store::profiles::acquire_locks_mut().await;
+				let Ok(selected) = locks.device_stores.get_selected_profile(&device) else { return };
+				let Some(info) = DEVICES.get(&device).map(|d| d.clone()) else { return };
+				let Ok(profile) = locks.profile_stores.get_profile_store(&info, &selected) else { return };
+				let contexts: Vec<_> = profile
+					.value
+					.keys
+					.iter()
+					.flatten()
+					.chain(profile.value.sliders.iter().flatten())
+					.chain(profile.value.infobars.iter().flatten())
+					.map(|instance| instance.context.clone())
+					.collect();
+				for context in contexts {
+					let _ = crate::events::frontend::instances::update_state(app, context, &mut locks).await;
+				}
+			});
+		}
 
 		use tauri_plugin_aptabase::EventTracker;
 		let _ = crate::APP_HANDLE
